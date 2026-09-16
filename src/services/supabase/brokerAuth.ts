@@ -11,7 +11,15 @@ export type AuthResult = { ok: true } | { ok: false; message: string };
 
 export async function signUpBroker(email: string, password: string): Promise<AuthResult> {
   if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment. See SUPABASE_SETUP.md.' };
-  const { error } = await supabase.auth.signUp({ email, password });
+  // Without an explicit emailRedirectTo, Supabase sends the confirmation link to whatever "Site
+  // URL" the project's dashboard happens to have configured — which defaults to a placeholder
+  // (commonly http://localhost:3000) and, if never updated for this deployment, sends every broker
+  // who signs up to an unreachable page after they click "confirm," making the product look broken
+  // even though the account was created successfully. Pointing this at the ACTUAL running origin
+  // fixes the app side; the URL still must be allow-listed in the dashboard (Authentication → URL
+  // Configuration → Redirect URLs) or Supabase ignores this and falls back to Site URL regardless
+  // — see SUPABASE_SETUP.md.
+  const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/login` } });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
 }

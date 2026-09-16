@@ -1,5 +1,7 @@
 export * from './common';
 export * from './business';
+export * from './contact';
+export * from './mvr';
 export * from './transportation';
 export * from './loss';
 export * from './coverage';

@@ -10,6 +10,7 @@ import type {
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { generateId } from '../../utils/id';
+import { isAmbiguousNameMatch } from './entityAssociation';
 
 function isEqualScalar(a: unknown, b: unknown): boolean {
   if (typeof a === 'string' && typeof b === 'string') return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -184,7 +185,17 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
   if (fieldPath === 'drivers') {
     const entry = result.value as Omit<DriverEntry, 'id' | 'source'>;
     if (isDuplicateRow(profile.drivers, entry, ['name', 'dob'])) return;
-    profile.drivers.push({ ...entry, id: generateId('drv'), source: result.source });
+    // A name close-but-not-identical to a driver already on file (e.g. "John Smith" vs "Jonathan
+    // Smith") is never merged into that existing row — it's a distinct row, always — but IS flagged,
+    // since two similarly-named people on one account is exactly the case a broker should double-check
+    // rather than assume is a duplicate/typo. An exact name match is handled by isDuplicateRow above
+    // when dob also matches; when dob differs (or is absent on either side) it still isn't ambiguous
+    // — same person, different-quality read, or two different people who happen to share a full name.
+    const ambiguousWith = entry.name ? profile.drivers.find((d) => d.name && isAmbiguousNameMatch(d.name, entry.name!)) : undefined;
+    const identityReviewNote = ambiguousWith
+      ? `Unable to confidently determine whether this driver is the same person as "${ambiguousWith.name}", already on file — please review.`
+      : undefined;
+    profile.drivers.push({ ...entry, id: generateId('drv'), source: result.source, ...(identityReviewNote ? { identityReviewNote } : {}) });
     return;
   }
 
@@ -343,6 +354,7 @@ export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: 
   profile.vehicles = profile.vehicles.filter((v) => v.isManual || v.source?.documentId !== documentId);
   profile.drivers = profile.drivers.filter((d) => d.isManual || d.source?.documentId !== documentId);
   profile.lossHistory = profile.lossHistory.filter((l) => l.isManual || l.source?.documentId !== documentId);
+  profile.contacts = profile.contacts.filter((c) => c.isManual || c.source?.documentId !== documentId);
 
   profile.updatedAt = new Date().toISOString();
   return profile;

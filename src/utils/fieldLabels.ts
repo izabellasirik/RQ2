@@ -40,6 +40,8 @@ export function fieldPathValueType(fieldPath: string): FieldValueType {
 export const DRIVER_FIELD_LABELS: Record<string, string> = {
   name: 'Name',
   address: 'Address',
+  phone: 'Phone',
+  email: 'Email',
   dob: 'Date of Birth',
   licenseState: 'License State',
   licenseNumber: 'License Number',
@@ -61,6 +63,8 @@ export const VEHICLE_FIELD_LABELS: Record<string, string> = {
   plate: 'Plate',
   value: 'Value',
   bodyType: 'Body Type',
+  registeredOwner: 'Registered Owner',
+  registrationAddress: 'Registration Address',
 };
 
 export const LOSS_FIELD_LABELS: Record<string, string> = {

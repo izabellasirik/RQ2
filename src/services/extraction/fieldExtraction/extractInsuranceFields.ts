@@ -15,6 +15,7 @@ import {
   detectDriverLicense,
   detectVehicleRegistration,
 } from './idDocumentPatterns';
+import { detectMvr } from './mvrPatterns';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -84,9 +85,15 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // patterns below. Skipping the business/transportation prose patterns entirely for a
   // detected ID-card document is what keeps a driver's personal details out of the applicant's
   // business section, rather than trying to out-guess which label "wins".
-  const isIdCardDocument = detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text);
+  // An MVR report is checked first: it shares several bare labels with a license (DOB, license
+  // number, class, state) that would otherwise make extractDriverLicenseFields misfire and produce
+  // an incomplete/wrong "driver" row from what is actually a driving-history report — MVR data is
+  // extracted separately (see mvrPatterns.ts + entityAssociation.ts) and associated to a driver by
+  // identity, never pushed as its own 'drivers' row here.
+  const isMvrDocument = detectMvr(doc.text);
+  const isIdCardDocument = !isMvrDocument && (detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text));
 
-  if (!isIdCardDocument) {
+  if (!isIdCardDocument && !isMvrDocument) {
     for (const field of SCALAR_FIELD_PATTERNS) {
       outer: for (const group of field.groups) {
         for (const pattern of group.patterns) {
@@ -170,7 +177,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // are built for, so they need their own dedicated, narrowly-gated extractors — see
   // idDocumentPatterns.ts for why this exists and how it avoids hallucinating a value from a
   // partially-unreadable field.
-  const licenseMatch = extractDriverLicenseFields(lines, doc.text);
+  const licenseMatch = isMvrDocument ? null : extractDriverLicenseFields(lines, doc.text);
   if (licenseMatch) {
     results.push({
       fieldPath: 'drivers',
@@ -198,7 +205,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // Skipped for a detected ID-card document for the same reason as the prose patterns above: a
   // multi-line driver's address can easily contain a bare "Nashville, TN 37210"-shaped line that
   // would otherwise get misread as the applicant business's city/state.
-  if (!isIdCardDocument && !results.some((r) => r.fieldPath === 'business.namedInsured')) {
+  if (!isIdCardDocument && !isMvrDocument && !results.some((r) => r.fieldPath === 'business.namedInsured')) {
     const nameMatch = findGenericBusinessName(lines);
     if (nameMatch) {
       results.push({
@@ -210,7 +217,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
       });
     }
   }
-  if (!isIdCardDocument && !results.some((r) => r.fieldPath === 'business.city')) {
+  if (!isIdCardDocument && !isMvrDocument && !results.some((r) => r.fieldPath === 'business.city')) {
     const cityState = findGenericCityState(lines);
     if (cityState) {
       results.push({

@@ -395,6 +395,29 @@ export function extractVehicleRegistrationFields(lines: TextLine[], fullText: st
     }
   }
 
+  // "Registered Owner" / "Owner" on a registration document is never assumed to be the applicant's
+  // Named Insured — it's a fact about this specific vehicle, kept on the row so a difference (e.g.
+  // a leasing company) can be surfaced as a review flag rather than silently overwriting business info.
+  const owner = firstMatch(lines, [/\bregistered\s+owner\s*:?\s*(.+)$/i, /^owner(?:'s)?\s*(?:name)?\s*:?\s*(.+)$/i]);
+  if (owner) {
+    attempted++;
+    const raw = owner.raw.trim().replace(/[.,;]+$/, '');
+    if (raw.length >= 2 && raw.length <= 120) {
+      entry.registeredOwner = raw;
+      excerpts.push(owner.line.text);
+    }
+  }
+
+  const ownerAddress = firstMatch(lines, [/\bowner\s+address\s*:?\s*(.+)$/i, /\bregistration\s+address\s*:?\s*(.+)$/i]);
+  if (ownerAddress) {
+    attempted++;
+    const raw = ownerAddress.raw.trim().replace(/[.,;]+$/, '');
+    if (raw.length >= 5 && raw.length <= 120 && /\d/.test(raw)) {
+      entry.registrationAddress = raw;
+      excerpts.push(ownerAddress.line.text);
+    }
+  }
+
   if (Object.keys(entry).length === 0) return null;
   return { entry, matchedText: excerpts.slice(0, 3).join(' | ') || 'Vehicle registration fields', fieldsAttempted: attempted };
 }

@@ -39,14 +39,18 @@ const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isMan
   value: ['value', 'vehicle value', 'stated value', 'acv', 'actual cash value'],
   bodyType: ['vehicle type', 'body type', 'unit type'],
   plate: ['plate', 'license plate', 'plate number', 'tag number'],
+  registeredOwner: ['registered owner', 'owner', 'owner name'],
+  registrationAddress: ['registration address', 'owner address'],
 };
 /** Bare single-word headers only safe as a whole-header match, never a substring. */
 const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
 
-const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence' | 'conflicts'>, string[]> = {
+const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence' | 'conflicts' | 'mvr' | 'identityReviewNote'>, string[]> = {
   name: ['driver name', 'employee name', 'name'],
   dob: ['dob', 'date of birth'],
   address: ['address', 'driver address', 'home address'],
+  phone: ['phone', 'driver phone', 'cell phone', 'mobile'],
+  email: ['email', 'driver email', 'email address'],
   licenseState: ['license state', 'lic state', 'state license', 'licensing state'],
   licenseNumber: ['license number', 'license no', 'dl number', 'lic number', 'lic #'],
   licenseClass: ['license class', 'lic class', 'class'],
@@ -99,6 +103,8 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
     value: findColumn(table.headers, VEHICLE_SYNONYMS.value),
     bodyType: findColumn(table.headers, VEHICLE_SYNONYMS.bodyType, VEHICLE_BODY_TYPE_EXACT_ONLY),
     plate: findColumn(table.headers, VEHICLE_SYNONYMS.plate),
+    registeredOwner: findColumn(table.headers, VEHICLE_SYNONYMS.registeredOwner),
+    registrationAddress: findColumn(table.headers, VEHICLE_SYNONYMS.registrationAddress),
   };
 
   const results: MappedVehicleRow[] = [];
@@ -121,6 +127,8 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
       if (bodyType !== null) entry.bodyType = bodyType;
     }
     if (col.plate !== -1 && row[col.plate]) entry.plate = row[col.plate].trim().toUpperCase();
+    if (col.registeredOwner !== -1 && row[col.registeredOwner]) entry.registeredOwner = row[col.registeredOwner].trim();
+    if (col.registrationAddress !== -1 && row[col.registrationAddress]) entry.registrationAddress = row[col.registrationAddress].trim();
     if (Object.keys(entry).length > 0) results.push({ row: i, entry });
   });
   return results;
@@ -136,6 +144,8 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     name: findColumn(table.headers, DRIVER_SYNONYMS.name, DRIVER_NAME_EXACT_ONLY),
     dob: findColumn(table.headers, DRIVER_SYNONYMS.dob),
     address: findColumn(table.headers, DRIVER_SYNONYMS.address),
+    phone: findColumn(table.headers, DRIVER_SYNONYMS.phone),
+    email: findColumn(table.headers, DRIVER_SYNONYMS.email),
     licenseState: findColumn(table.headers, DRIVER_SYNONYMS.licenseState),
     licenseNumber: findColumn(table.headers, DRIVER_SYNONYMS.licenseNumber),
     licenseClass: findColumn(table.headers, DRIVER_SYNONYMS.licenseClass),
@@ -153,6 +163,8 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     if (col.name !== -1 && row[col.name]) entry.name = row[col.name].trim();
     if (col.dob !== -1 && row[col.dob]) entry.dob = row[col.dob].trim();
     if (col.address !== -1 && row[col.address]) entry.address = row[col.address].trim();
+    if (col.phone !== -1 && row[col.phone]) entry.phone = row[col.phone].trim();
+    if (col.email !== -1 && row[col.email]) entry.email = row[col.email].trim();
     if (col.licenseState !== -1 && row[col.licenseState]) entry.licenseState = row[col.licenseState].trim().toUpperCase();
     if (col.licenseNumber !== -1 && row[col.licenseNumber]) entry.licenseNumber = row[col.licenseNumber].trim().toUpperCase();
     if (col.licenseClass !== -1 && row[col.licenseClass]) entry.licenseClass = row[col.licenseClass].trim().toUpperCase();

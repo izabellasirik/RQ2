@@ -1,5 +1,6 @@
 import type { DocumentCategory, DocumentFileType } from '../types';
 import { detectDriverLicense, detectVehicleRegistration, detectInsuranceIdCard, detectDeclarationsPage } from '../services/extraction/fieldExtraction/idDocumentPatterns';
+import { detectMvr } from '../services/extraction/fieldExtraction/mvrPatterns';
 
 /** Image extensions this app can actually decode/OCR client-side. HEIC/HEIF are deliberately not included yet — see services/ingestion/parseImage.ts for why. */
 export const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'] as const;
@@ -17,6 +18,7 @@ export function inferFileType(fileName: string): DocumentFileType {
 
 export function inferCategory(fileName: string): DocumentCategory {
   const n = fileName.toLowerCase();
+  if (n.includes('mvr') || n.includes('driving record') || n.includes('motor vehicle record')) return 'mvr';
   if (n.includes('loss')) return 'loss_run';
   if (n.includes('vehicle')) return 'vehicle_schedule';
   if (n.includes('driver')) return 'driver_schedule';
@@ -40,6 +42,7 @@ export function inferCategoryFromText(text: string): DocumentCategory | null {
   // "IMG_1843.png" or "REGULAR_LICENSE.png" alike is classified from what the image actually says.
   if (detectDriverLicense(text)) return 'driver_license';
   if (detectVehicleRegistration(text)) return 'vehicle_registration';
+  if (detectMvr(text)) return 'mvr';
   if (detectDeclarationsPage(text)) return 'insurance_declarations';
   if (detectInsuranceIdCard(text)) return 'insurance_id_card';
   if (/\bloss run\b|\bclaims? history\b|\bincurred\b.{0,20}\bpaid\b/.test(t)) return 'loss_run';

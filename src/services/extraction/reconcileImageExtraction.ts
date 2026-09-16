@@ -77,8 +77,8 @@ export function mergeEntryFields<T extends EntryWithMeta>(visionEntry: T | undef
   return { ...merged, fieldConfidence, conflicts: Object.keys(conflicts).length > 0 ? conflicts : undefined };
 }
 
-const DRIVER_FIELDS = ['name', 'dob', 'address', 'licenseState', 'licenseNumber', 'licenseClass', 'isCDL', 'issueDate', 'expirationDate', 'restrictions', 'endorsements'];
-const VEHICLE_FIELDS = ['vin', 'make', 'model', 'year', 'plate', 'value', 'bodyType'];
+const DRIVER_FIELDS = ['name', 'dob', 'address', 'phone', 'email', 'licenseState', 'licenseNumber', 'licenseClass', 'isCDL', 'issueDate', 'expirationDate', 'restrictions', 'endorsements'];
+const VEHICLE_FIELDS = ['vin', 'make', 'model', 'year', 'plate', 'value', 'bodyType', 'registeredOwner', 'registrationAddress'];
 
 export interface ReconcileImageExtractionInput {
   documentId: string;

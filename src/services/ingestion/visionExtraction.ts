@@ -42,6 +42,7 @@ const DOCUMENT_TYPES: DocumentCategory[] = [
   'vehicle_registration',
   'insurance_id_card',
   'insurance_declarations',
+  'mvr',
   'other',
 ];
 
@@ -83,11 +84,15 @@ const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number 
   'business.namedInsured': asTrimmedString,
   'business.legalEntity': asTrimmedString,
   'business.dba': asTrimmedString,
+  'business.ownerName': asTrimmedString,
   'business.fein': asFein,
   'business.address': asTrimmedString,
   'business.city': asTrimmedString,
   'business.state': asStateCode,
   'business.zip': (raw) => (typeof raw === 'string' && /^\d{5}(-\d{4})?$/.test(raw.trim()) ? raw.trim() : null),
+  'business.mailingAddress': asTrimmedString,
+  'business.phone': asPhone,
+  'business.email': asEmail,
   'business.yearsInBusiness': asNonNegativeCount,
   'business.annualRevenue': asMoney,
   'business.descriptionOfOperations': asTrimmedString,
@@ -114,6 +119,10 @@ const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number 
   'coverage.general_liability.currentLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.requestedLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.currentLimit': asCoverageLimit,
+  'coverage.trailer_interchange.requestedLimit': asCoverageLimit,
+  'coverage.trailer_interchange.currentLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.requestedLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.currentLimit': asCoverageLimit,
 };
 
 /**
@@ -176,7 +185,23 @@ function asBoolean(raw: unknown): boolean | null {
   return typeof raw === 'boolean' ? raw : null;
 }
 
-const COVERAGE_TYPES = new Set(['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability']);
+/** Same format rule as the regex pipeline's asPhone (scalarPatterns.ts) — exactly 10 digits once punctuation is stripped, an 11th leading "1" tolerated and dropped. */
+function asPhone(raw: unknown): string | null {
+  const s = typeof raw === 'string' ? raw : typeof raw === 'number' ? String(raw) : null;
+  if (!s) return null;
+  let digits = s.replace(/[^0-9]/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  if (digits.length !== 10) return null;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function asEmail(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) ? t.toLowerCase() : null;
+}
+
+const COVERAGE_TYPES = new Set(['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability', 'trailer_interchange', 'non_trucking_liability']);
 function asCoverageType(raw: unknown): string | null {
   return typeof raw === 'string' && COVERAGE_TYPES.has(raw) ? raw : null;
 }
@@ -214,6 +239,10 @@ function validateDriver(raw: unknown): VisionExtractionResult['driver'] | undefi
   if (dob) { entry.dob = dob; fieldConfidence.dob = asConfidence(confMap.dob); }
   const address = asTrimmedString(r.address);
   if (address && /\d/.test(address)) { entry.address = address; fieldConfidence.address = asConfidence(confMap.address); }
+  const phone = asPhone(r.phone);
+  if (phone) { entry.phone = phone; fieldConfidence.phone = asConfidence(confMap.phone); }
+  const email = asEmail(r.email);
+  if (email) { entry.email = email; fieldConfidence.email = asConfidence(confMap.email); }
   const licenseState = typeof r.licenseState === 'string' ? parseStateName(r.licenseState) : null;
   if (licenseState) { entry.licenseState = licenseState; fieldConfidence.licenseState = asConfidence(confMap.licenseState); }
   const licenseNumber = typeof r.licenseNumber === 'string' ? normalizeIdToken(r.licenseNumber) : null;
@@ -254,6 +283,10 @@ function validateVehicle(raw: unknown): VisionExtractionResult['vehicle'] | unde
   if (plate && /^[A-Za-z0-9-]{2,10}$/.test(plate)) { entry.plate = plate.toUpperCase(); fieldConfidence.plate = asConfidence(confMap.plate); }
   const value = asMoney(r.value);
   if (value !== null) { entry.value = value; fieldConfidence.value = asConfidence(confMap.value); }
+  const registeredOwner = asTrimmedString(r.registeredOwner);
+  if (registeredOwner) { entry.registeredOwner = registeredOwner; fieldConfidence.registeredOwner = asConfidence(confMap.registeredOwner); }
+  const registrationAddress = asTrimmedString(r.registrationAddress);
+  if (registrationAddress && /\d/.test(registrationAddress)) { entry.registrationAddress = registrationAddress; fieldConfidence.registrationAddress = asConfidence(confMap.registrationAddress); }
 
   if (Object.keys(entry).length === 0) return undefined;
   entry.fieldConfidence = fieldConfidence;

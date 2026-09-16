@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, CircleCheck, PencilLine, Sparkles } from 'lucide-react';
 import type { ExtractionMethod, FieldValue } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
-import { Badge, Skeleton } from '../ui';
+import { Badge, CopyButton, Skeleton } from '../ui';
 import { cn } from '../../utils/cn';
 import { relativeTime } from '../../utils/dates';
 import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
@@ -277,6 +277,9 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                 </button>
               ) : (
                 <p className="text-sm text-[var(--color-ink-900)]">{valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)}</p>
+              )}
+              {!field.isMissing && (
+                <CopyButton iconOnly text={valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)} label={`Copy ${label}`} />
               )}
             </div>
           ) : (

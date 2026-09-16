@@ -14,7 +14,15 @@ export type IntakeSubmissionStatus = 'pending' | 'imported' | 'dismissed';
 export interface IntakeLink {
   id: string;
   userId: string;
+  /** Who the broker is sharing this link WITH (e.g. "Acme Safety Group") — an internal reference, never shown to the applicant as if it were the broker's own identity. */
   label: string;
+  /**
+   * The broker/agency's own name, shown to the applicant on the intake form so they know who is
+   * actually asking for and receiving this submission — resolves the real-world confusion of a
+   * broker asking "who will receive this link?" Optional (never invented if not provided) since an
+   * existing link created before this field existed simply has none.
+   */
+  brokerageName: string | null;
   token: string;
   active: boolean;
   createdAt: string;

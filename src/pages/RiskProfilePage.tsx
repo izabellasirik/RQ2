@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
-import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../components/ui';
+import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, CopyButton, type OverflowMenuItem } from '../components/ui';
 import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
@@ -13,16 +13,20 @@ import { InsightStrip } from '../components/riskProfile/InsightStrip';
 import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
+import { ContactsTable } from '../components/riskProfile/ContactsTable';
+import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
+import { buildReviewFlags } from '../services/extraction';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
+import { buildAccountCopyText } from '../utils/copySummary';
 import { emptyField } from '../types';
 import { cn } from '../utils/cn';
 
@@ -35,7 +39,7 @@ const TREND_COLOR = {
   insufficient_data: 'text-[var(--color-ink-400)]',
 };
 
-type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history';
+type TabKey = 'details' | 'fleet' | 'drivers' | 'contacts' | 'loss-history';
 
 export function RiskProfilePage() {
   const { accountId = '' } = useParams();
@@ -53,6 +57,9 @@ export function RiskProfilePage() {
   const addDriver = useAccountsStore((s) => s.addDriver);
   const updateDriver = useAccountsStore((s) => s.updateDriver);
   const deleteDriver = useAccountsStore((s) => s.deleteDriver);
+  const addContact = useAccountsStore((s) => s.addContact);
+  const updateContact = useAccountsStore((s) => s.updateContact);
+  const deleteContact = useAccountsStore((s) => s.deleteContact);
   const addLoss = useAccountsStore((s) => s.addLoss);
   const updateLoss = useAccountsStore((s) => s.updateLoss);
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
@@ -112,6 +119,8 @@ export function RiskProfilePage() {
   const driverSummary = useMemo(() => deriveDriverSummary(profile?.drivers ?? []), [profile?.drivers]);
   const lossSummary = useMemo(() => deriveLossSummary(profile?.lossHistory ?? []), [profile?.lossHistory]);
   const lossRunDocs = documents.filter((d) => d.category === 'loss_run' && d.status === 'processed');
+  const reviewFlags = useMemo(() => (profile ? buildReviewFlags(profile, documents) : []), [profile, documents]);
+  const copyAllText = useMemo(() => (account && profile ? buildAccountCopyText(account, profile) : ''), [account, profile]);
 
   if (!account || !profile || !completeness) {
     return <AccountNotFound />;
@@ -119,10 +128,11 @@ export function RiskProfilePage() {
 
   return (
     <PageContainer
-      title={`Risk Profile — ${account.namedInsured}`}
-      description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
+      title={`Account Workspace — ${account.namedInsured}`}
+      description="Everything extracted from uploaded documents, organized once so you can review it, correct it, and copy it — instead of reopening every document again. Every value shows its confidence and source."
       actions={
         <>
+          <CopyButton text={copyAllText} label="Copy All" />
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
             What's missing?
           </Button>
@@ -160,6 +170,7 @@ export function RiskProfilePage() {
       </div>
 
       <ConflictBanner count={stats.conflicting.length} />
+      <ReviewFlagsPanel flags={reviewFlags} />
       <MissingFieldsPanel
         fields={stats.missing.map((m) => ({ label: m.field.label, section: m.field.section, key: m.field.key }))}
         onFieldClick={focusField}
@@ -169,7 +180,8 @@ export function RiskProfilePage() {
         items={[
           { key: 'details', label: 'Business & Transportation' },
           { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
-          { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
+          { key: 'drivers', label: 'Drivers & MVR', count: profile.drivers.length },
+          { key: 'contacts', label: 'Contacts', count: profile.contacts.length },
           { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
         ]}
         active={tab}
@@ -274,6 +286,17 @@ export function RiskProfilePage() {
             onAdd={(entry) => addDriver(accountId, entry)}
             onUpdate={(id, patch) => updateDriver(accountId, id, patch)}
             onDelete={(id) => deleteDriver(accountId, id)}
+          />
+        </SectionCard>
+      )}
+
+      {tab === 'contacts' && (
+        <SectionCard title="Contacts" description="People tied to this account who aren't necessarily the Named Insured, an owner, or a driver.">
+          <ContactsTable
+            contacts={profile.contacts}
+            onAdd={(entry) => addContact(accountId, entry)}
+            onUpdate={(id, patch) => updateContact(accountId, id, patch)}
+            onDelete={(id) => deleteContact(accountId, id)}
           />
         </SectionCard>
       )}

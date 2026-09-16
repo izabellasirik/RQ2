@@ -53,6 +53,20 @@ function asFein(raw: string): string | null {
   return digits.length === 9 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : null;
 }
 
+/** A US phone number: exactly 10 digits once punctuation is stripped (an 11th leading "1" is tolerated and dropped) — never accepted as a partial/garbled read. */
+function asPhone(raw: string): string | null {
+  let digits = raw.replace(/[^0-9]/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  if (digits.length !== 10) return null;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+/** A plausible email address — simple format check, never a deliverability check. */
+function asEmail(raw: string): string | null {
+  const t = raw.trim().replace(/[.,;]+$/, '');
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) ? t.toLowerCase() : null;
+}
+
 /**
  * Deterministic label/regex patterns for scalar RiskProfile fields, applied line-by-line over a
  * document's raw text. "high"-confidence groups match explicit "Label: value" formatting; "medium"
@@ -140,12 +154,58 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     ],
   },
   {
+    // Owner is deliberately its own labeled-only field, same treatment as DBA — never inferred from
+    // a driver's name or from context, only from a document explicitly labeling someone "Owner".
+    fieldPath: 'business.ownerName',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/^owner(?:'s)?\s*(?:name)?\s*:\s*(.+)/i, /business owner\s*:\s*(.+)/i, /principal(?:'s)? name\s*:\s*(.+)/i],
+      },
+    ],
+  },
+  {
+    fieldPath: 'business.phone',
+    coerce: asPhone,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/(?:business|company|office|main)\s+phone(?:\s+number)?\s*:\s*([\d().\- +]{7,20})/i, /^phone(?:\s+number)?\s*:\s*([\d().\- +]{7,20})/i, /^tel(?:ephone)?\s*:\s*([\d().\- +]{7,20})/i],
+      },
+    ],
+  },
+  {
+    fieldPath: 'business.email',
+    coerce: asEmail,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/(?:business|company|office|contact)\s+email\s*:\s*(\S+@\S+)/i, /^email(?:\s+address)?\s*:\s*(\S+@\S+)/i],
+      },
+    ],
+  },
+  {
+    // Only ever populated when a document explicitly labels an address as a MAILING address that
+    // differs from the physical/business one — never defaulted or copied from business.address.
+    fieldPath: 'business.mailingAddress',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/mailing\s+address\s*(?:\(if different\))?\s*:\s*(.+)/i],
+      },
+    ],
+  },
+  {
+    // Deliberately excludes a "mailing address" label — that's business.mailingAddress's own field,
+    // only ever populated when a document explicitly distinguishes it from the physical address.
     fieldPath: 'business.address',
     coerce: (raw) => raw.trim() || null,
     groups: [
       {
         confidence: 'high',
-        patterns: [/(?:mailing|business|physical|principal)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i, /(?:business|company)\s+location\s*:\s*(.+)/i],
+        patterns: [/(?:business|physical|principal)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i, /(?:business|company)\s+location\s*:\s*(.+)/i],
       },
     ],
   },
@@ -312,5 +372,15 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     fieldPath: 'coverage.general_liability.requestedLimit',
     coerce: asCoverageLimit,
     groups: [{ confidence: 'high', patterns: [/general liability(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.trailer_interchange.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/trailer interchange(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.non_trucking_liability.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/non[\s-]?trucking liability(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }] ,
   },
 ];

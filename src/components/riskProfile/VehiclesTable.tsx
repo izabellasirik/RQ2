@@ -1,7 +1,20 @@
 import { useState } from 'react';
 import { Plus, Pencil, Trash2, Check, X, User, AlertTriangle } from 'lucide-react';
 import type { VehicleEntry } from '../../types';
-import { Button, ConfirmDialog } from '../ui';
+import { Button, ConfirmDialog, CopyButton } from '../ui';
+
+function vehicleCopyText(v: VehicleEntry): string {
+  const lines = [
+    v.vin && `VIN: ${v.vin}`,
+    v.year !== undefined && `Year: ${v.year}`,
+    v.make && `Make: ${v.make}`,
+    v.model && `Model: ${v.model}`,
+    v.plate && `Plate: ${v.plate}`,
+    v.value !== undefined && `Value: $${v.value.toLocaleString('en-US')}`,
+    v.registeredOwner && `Registered Owner: ${v.registeredOwner}`,
+  ].filter(Boolean);
+  return lines.join('\n');
+}
 
 /** True when at least one field on this row was a shakier read, or when the vision model and OCR disagreed on a field. */
 function needsReview(v: VehicleEntry): boolean {
@@ -15,9 +28,9 @@ function reviewTooltip(v: VehicleEntry): string {
   return 'Some fields on this row were a shakier read — double-check against the source photo.';
 }
 
-type Draft = { vin: string; make: string; model: string; year: string; value: string; bodyType: string; plate: string };
+type Draft = { vin: string; make: string; model: string; year: string; value: string; bodyType: string; plate: string; registeredOwner: string };
 
-const EMPTY_DRAFT: Draft = { vin: '', make: '', model: '', year: '', value: '', bodyType: '', plate: '' };
+const EMPTY_DRAFT: Draft = { vin: '', make: '', model: '', year: '', value: '', bodyType: '', plate: '', registeredOwner: '' };
 
 function toDraft(v: VehicleEntry): Draft {
   return {
@@ -28,6 +41,7 @@ function toDraft(v: VehicleEntry): Draft {
     value: v.value !== undefined ? String(v.value) : '',
     bodyType: v.bodyType ?? '',
     plate: v.plate ?? '',
+    registeredOwner: v.registeredOwner ?? '',
   };
 }
 
@@ -40,6 +54,7 @@ function fromDraft(d: Draft): Omit<VehicleEntry, 'id'> {
     value: d.value.trim() ? Number(d.value.replace(/,/g, '')) : undefined,
     bodyType: d.bodyType.trim() || undefined,
     plate: d.plate.trim() || undefined,
+    registeredOwner: d.registeredOwner.trim() || undefined,
   };
 }
 
@@ -93,6 +108,7 @@ export function VehiclesTable({
             <th className="py-2 pr-4 font-medium">Year</th>
             <th className="py-2 pr-4 font-medium">Plate</th>
             <th className="py-2 pr-4 font-medium">Value</th>
+            <th className="py-2 pr-4 font-medium">Registered Owner</th>
             <th className="py-2 pr-4 font-medium">Source</th>
             <th className="py-2 font-medium" />
           </tr>
@@ -106,6 +122,7 @@ export function VehiclesTable({
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Year" value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Plate" value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Value" value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
+              <td className="py-2 pr-4"><input className={inputCls} placeholder="Registered Owner" value={draft.registeredOwner} onChange={(e) => setDraft({ ...draft, registeredOwner: e.target.value })} /></td>
               <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">Entered by broker</td>
               <td className="py-2">
                 <div className="flex items-center gap-1">
@@ -124,6 +141,7 @@ export function VehiclesTable({
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
+                <td className="py-2 pr-4"><input className={inputCls} value={draft.registeredOwner} onChange={(e) => setDraft({ ...draft, registeredOwner: e.target.value })} /></td>
                 <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{v.source?.documentName ?? 'Entered by broker'}</td>
                 <td className="py-2">
                   <div className="flex items-center gap-1">
@@ -149,6 +167,7 @@ export function VehiclesTable({
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.year ?? '—'}</td>
                 <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">{v.plate ?? '—'}</td>
                 <td className="py-2.5 pr-4 font-medium text-[var(--color-ink-900)]">{v.value ? `$${v.value.toLocaleString('en-US')}` : '—'}</td>
+                <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.registeredOwner ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                   {v.isManual ? (
                     <span className="inline-flex items-center gap-1"><User size={11} />Entered by broker</span>
@@ -158,6 +177,7 @@ export function VehiclesTable({
                 </td>
                 <td className="py-2.5">
                   <div className="flex items-center gap-1">
+                    <CopyButton iconOnly text={vehicleCopyText(v)} label="Copy vehicle" />
                     <button onClick={() => startEdit(v)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer disabled:opacity-40" aria-label="Edit vehicle"><Pencil size={13} /></button>
                     <button onClick={() => setDeleteTarget(v)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer disabled:opacity-40" aria-label="Delete vehicle"><Trash2 size={13} /></button>
                   </div>

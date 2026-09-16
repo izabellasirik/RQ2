@@ -5,6 +5,7 @@ import type {
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
+  Contact,
   CoverageLine,
   CoverageType,
   DriverEntry,
@@ -29,6 +30,8 @@ import {
   removeDocumentFromRiskProfile,
   extractInsuranceFields,
   reconcileImageExtraction,
+  extractMvrCandidateFromDocument,
+  applyMvrCandidate,
 } from '../services/extraction';
 import { extractViaVision } from '../services/ingestion/visionExtraction';
 import { countExtractedFields } from '../utils/fieldCount';
@@ -104,6 +107,9 @@ interface AccountsState {
   addLoss: (accountId: string, entry: Omit<LossEntry, 'id'>) => void;
   updateLoss: (accountId: string, lossId: string, patch: Partial<LossEntry>) => void;
   deleteLoss: (accountId: string, lossId: string) => void;
+  addContact: (accountId: string, entry: Omit<Contact, 'id'>) => void;
+  updateContact: (accountId: string, contactId: string, patch: Partial<Contact>) => void;
+  deleteContact: (accountId: string, contactId: string) => void;
   runMatching: (accountId: string) => void;
   /** Fetches approved appetite_overrides from Supabase and merges them onto the base records. No-ops (leaves effectiveAppetiteRecords as the base data) if Supabase isn't configured or the fetch fails. */
   loadEffectiveAppetiteRecords: () => Promise<void>;
@@ -333,7 +339,13 @@ export const useAccountsStore = create<AccountsState>()(
               // being an accurate description of the document once a vision read has taken over as
               // the primary source — only surfaced when OCR is what the final result actually rests on.
               const warnings = isImageSource && visionResult && fieldsExtracted > 0 ? [] : raw.warnings;
-              const contentCategory = documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : null);
+              // Text-based category refinement now runs for every source, not just images — a PDF's
+              // own content (e.g. an MVR report) is a far more reliable signal than its filename.
+              const contentCategory = documentCategory ?? (raw.text ? inferCategoryFromText(raw.text) : null);
+              // MVR is its own extraction path (see mvrPatterns.ts) — never folded into the
+              // scalar/table results above, since an MVR's data has to be associated to a specific
+              // existing driver (or flagged for review) rather than merged like an ordinary field.
+              const mvrCandidate = extractMvrCandidateFromDocument(raw);
 
               if (import.meta.env.DEV) {
                 // Counts and metadata only — never the OCR'd/vision text or any extracted field
@@ -355,6 +367,7 @@ export const useAccountsStore = create<AccountsState>()(
                 const profile = s.riskProfiles[accountId];
                 if (!profile) return {};
                 const updatedProfile = mergeIntoRiskProfile({ ...profile }, results);
+                const mvrNote = mvrCandidate ? applyMvrCandidate(updatedProfile, mvrCandidate, doc.id, doc.name) : null;
                 const updatedDocs = (s.documents[accountId] ?? []).map((d) =>
                   d.id === doc.id
                     ? {
@@ -369,15 +382,17 @@ export const useAccountsStore = create<AccountsState>()(
                       }
                     : d
                 );
+                let log = appendEvent(
+                  s.activityLog,
+                  accountId,
+                  'document_processed',
+                  readFailed ? `Could not read ${doc.name}.` : `Extracted ${fieldsExtracted} field${fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`
+                );
+                if (mvrNote) log = appendEvent(log, accountId, 'document_processed', mvrNote);
                 return {
                   riskProfiles: { ...s.riskProfiles, [accountId]: updatedProfile },
                   documents: { ...s.documents, [accountId]: updatedDocs },
-                  activityLog: appendEvent(
-                    s.activityLog,
-                    accountId,
-                    'document_processed',
-                    readFailed ? `Could not read ${doc.name}.` : `Extracted ${fieldsExtracted} field${fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`
-                  ),
+                  activityLog: log,
                 };
               });
               get().runMatching(accountId);
@@ -612,7 +627,11 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => {
           const profile = s.riskProfiles[accountId];
           if (!profile) return {};
-          const drivers = updateRecordEntry(profile.drivers, driverId, patch);
+          // A broker editing this row at all is an implicit review of it — an unresolved identity
+          // flag (see entityAssociation.ts) should not keep showing after that, unless this same
+          // edit is explicitly setting a new one.
+          const clearsReviewNote = !('identityReviewNote' in patch);
+          const drivers = updateRecordEntry(profile.drivers, driverId, clearsReviewNote ? { ...patch, identityReviewNote: undefined } : patch);
           return {
             riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
             accounts: touchAccount(s.accounts, accountId),
@@ -677,6 +696,46 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
+      },
+
+      addContact: (accountId, entry) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const contacts = addRecordEntry(profile.contacts, entry, 'contact');
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, contacts, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_added', `Added a contact${entry.name ? ` (${entry.name})` : ''}.`),
+          };
+        });
+        syncNow(accountId);
+      },
+      updateContact: (accountId, contactId, patch) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const contacts = updateRecordEntry(profile.contacts, contactId, patch);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, contacts, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_edited', 'Edited a contact.'),
+          };
+        });
+        syncNow(accountId);
+      },
+      deleteContact: (accountId, contactId) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const contacts = deleteRecordEntry(profile.contacts, contactId);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, contacts, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_deleted', 'Deleted a contact.'),
+          };
+        });
         syncNow(accountId);
       },
 

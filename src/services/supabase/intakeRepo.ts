@@ -27,13 +27,14 @@ interface IntakeLinkRow {
   id: string;
   user_id: string;
   label: string;
+  brokerage_name: string | null;
   token: string;
   active: boolean;
   created_at: string;
 }
 
 function rowToLink(row: IntakeLinkRow): IntakeLink {
-  return { id: row.id, userId: row.user_id, label: row.label, token: row.token, active: row.active, createdAt: row.created_at };
+  return { id: row.id, userId: row.user_id, label: row.label, brokerageName: row.brokerage_name ?? null, token: row.token, active: row.active, createdAt: row.created_at };
 }
 
 interface IntakeSubmissionRow {
@@ -222,11 +223,13 @@ function generateIntakeToken(): string {
   return crypto.randomUUID();
 }
 
-export async function createIntakeLink(userId: string, label: string): Promise<RepoResult<IntakeLink>> {
+export async function createIntakeLink(userId: string, label: string, brokerageName: string | null = null): Promise<RepoResult<IntakeLink>> {
   if (!supabase) return NOT_CONFIGURED;
-  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
+  const link: IntakeLink = { id: generateId('ilink'), userId, label, brokerageName, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
   try {
-    const { error } = await supabase.from('intake_links').insert({ id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt });
+    const { error } = await supabase
+      .from('intake_links')
+      .insert({ id: link.id, user_id: userId, label, brokerage_name: brokerageName, token: link.token, active: true, created_at: link.createdAt });
     if (error) return fail(error.message);
     return { ok: true, data: link };
   } catch (err) {

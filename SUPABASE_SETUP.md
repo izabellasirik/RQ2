@@ -204,6 +204,18 @@ their own private workspace; this is the intended self-service flow (unlike admi
   before the account can sign in — `/signup` already handles this (it shows "check your email"
   rather than silently doing nothing). If you'd rather brokers get in immediately, turn it off in
   **Authentication → Providers → Email → Confirm email**; either setting works with this app as-is.
+- **REQUIRED — confirmation link redirect (fixes "the app looks broken after I click verify")**:
+  `signUpBroker` (`services/supabase/brokerAuth.ts`) explicitly requests `emailRedirectTo:
+  {origin}/login`, but Supabase only honors that if the exact URL is allow-listed — otherwise it
+  silently falls back to the project's **Site URL**, which for a fresh project is a placeholder
+  (often `http://localhost:3000`) that a real broker's browser can't reach. Two one-time dashboard
+  steps, both under **Authentication → URL Configuration**:
+  1. Set **Site URL** to this deployment's real origin (e.g. `https://your-production-domain.com`).
+  2. Under **Redirect URLs**, add `https://your-production-domain.com/login` and, for local dev,
+     `http://localhost:5173/login` — the same two entries §9's "Forgot password?" step below asks
+     for, so if you've already done that step this is already covered.
+  Without both, a broker who signs up sees a real "page not found"/unreachable screen after
+  clicking the email link even though their account was created successfully.
 - **"Forgot password?" on `/login`**: same one-time step as §6, except the redirect URL ends in
   `/login` instead of `/admin` — add both `https://your-production-domain.com/login` and
   `http://localhost:5173/login` under **Authentication → URL Configuration → Redirect URLs**.

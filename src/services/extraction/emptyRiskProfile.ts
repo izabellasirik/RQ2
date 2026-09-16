@@ -10,11 +10,15 @@ export function createEmptyRiskProfile(accountId: string): RiskProfile {
       namedInsured: emptyField(),
       legalEntity: emptyField(),
       dba: emptyField(),
+      ownerName: emptyField(),
       fein: emptyField(),
       address: emptyField(),
       city: emptyField(),
       state: emptyField(),
       zip: emptyField(),
+      mailingAddress: emptyField(),
+      phone: emptyField(),
+      email: emptyField(),
       yearsInBusiness: emptyField(),
       annualRevenue: emptyField(),
       descriptionOfOperations: emptyField(),
@@ -38,6 +42,7 @@ export function createEmptyRiskProfile(accountId: string): RiskProfile {
     coverage: [],
     vehicles: [],
     drivers: [],
+    contacts: [],
     updatedAt: new Date().toISOString(),
   };
 }

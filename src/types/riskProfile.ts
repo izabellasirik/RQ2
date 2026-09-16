@@ -4,6 +4,7 @@ import type { LossEntry } from './loss';
 import type { CoverageLine } from './coverage';
 import type { VehicleEntry } from './vehicle';
 import type { DriverEntry } from './driver';
+import type { Contact } from './contact';
 
 export interface RiskProfile {
   id: string;
@@ -16,6 +17,8 @@ export interface RiskProfile {
   vehicles: VehicleEntry[];
   /** Itemized drivers, e.g. from a driver schedule spreadsheet. */
   drivers: DriverEntry[];
+  /** People associated with the account who aren't necessarily the Named Insured, an Owner, or a Driver — see types/contact.ts. */
+  contacts: Contact[];
   updatedAt: string;
 }
 

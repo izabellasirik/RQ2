@@ -1,7 +1,21 @@
 import { useState } from 'react';
 import { Plus, Pencil, Trash2, Check, X, User, AlertTriangle } from 'lucide-react';
 import type { DriverEntry } from '../../types';
-import { Button, ConfirmDialog } from '../ui';
+import { Button, ConfirmDialog, CopyButton } from '../ui';
+
+function driverCopyText(d: DriverEntry): string {
+  const lines = [
+    d.name && `Name: ${d.name}`,
+    d.dob && `DOB: ${d.dob}`,
+    d.licenseState && `License State: ${d.licenseState}`,
+    d.licenseNumber && `License #: ${d.licenseNumber}`,
+    d.licenseClass && `Class: ${d.licenseClass}`,
+    d.expirationDate && `Expires: ${d.expirationDate}`,
+    d.yearsExperience !== undefined && `Years Experience: ${d.yearsExperience}`,
+    d.violations && `Violations: ${d.violations}`,
+  ].filter(Boolean);
+  return lines.join('\n');
+}
 
 type Draft = {
   name: string;
@@ -45,12 +59,13 @@ function fromDraft(d: Draft): Omit<DriverEntry, 'id'> {
   };
 }
 
-/** True when at least one field on this row was a shakier read than the rest, or when the vision model and OCR disagreed on a field — surfaced as a small inline flag rather than hiding or discarding the row. */
+/** True when at least one field on this row was a shakier read than the rest, the vision model and OCR disagreed on a field, or identity association is uncertain (see entityAssociation.ts) — surfaced as a small inline flag rather than hiding or discarding the row. */
 function needsReview(d: DriverEntry): boolean {
-  return (!!d.conflicts && Object.keys(d.conflicts).length > 0) || (!!d.fieldConfidence && Object.values(d.fieldConfidence).some((c) => c === 'low'));
+  return !!d.identityReviewNote || (!!d.conflicts && Object.keys(d.conflicts).length > 0) || (!!d.fieldConfidence && Object.values(d.fieldConfidence).some((c) => c === 'low'));
 }
 
 function reviewTooltip(d: DriverEntry): string {
+  if (d.identityReviewNote) return d.identityReviewNote;
   if (d.conflicts && Object.keys(d.conflicts).length > 0) {
     const fields = Object.keys(d.conflicts).join(', ');
     return `AI vision and OCR read this row's ${fields} differently — double-check against the source photo.`;
@@ -59,6 +74,16 @@ function reviewTooltip(d: DriverEntry): string {
 }
 
 const inputCls = 'w-full rounded-md border border-[var(--color-brand-500)] px-1.5 py-1 text-xs outline-none';
+
+/** One-line summary of a driver's MVR — deliberately just facts (violation count, medical cert status), never an eligibility call. */
+function mvrSummary(d: DriverEntry): string {
+  if (!d.mvr) return '—';
+  const parts: string[] = [];
+  parts.push(`${d.mvr.violations.length} violation${d.mvr.violations.length === 1 ? '' : 's'}`);
+  if (d.mvr.medicalCertStatus) parts.push(`Medical: ${d.mvr.medicalCertStatus}`);
+  if (d.mvr.reportDate) parts.push(`Report ${d.mvr.reportDate}`);
+  return parts.join(' · ');
+}
 
 export function DriversTable({
   drivers,
@@ -107,6 +132,7 @@ export function DriversTable({
         <td className="py-2 pr-4"><input className={inputCls} placeholder="YYYY-MM-DD" value={draft.expirationDate} onChange={(e) => setDraft({ ...draft, expirationDate: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="Years" value={draft.yearsExperience} onChange={(e) => setDraft({ ...draft, yearsExperience: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="None" value={draft.violations} onChange={(e) => setDraft({ ...draft, violations: e.target.value })} /></td>
+        <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{d?.mvr ? mvrSummary(d) : '—'}</td>
         <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{isNew ? 'Entered by broker' : d?.source?.documentName ?? 'Entered by broker'}</td>
         <td className="py-2">
           <div className="flex items-center gap-1">
@@ -136,6 +162,7 @@ export function DriversTable({
             <th className="py-2 pr-4 font-medium">Expires</th>
             <th className="py-2 pr-4 font-medium">Years Experience</th>
             <th className="py-2 pr-4 font-medium">Violations</th>
+            <th className="py-2 pr-4 font-medium">MVR</th>
             <th className="py-2 pr-4 font-medium">Source</th>
             <th className="py-2 font-medium" />
           </tr>
@@ -165,6 +192,7 @@ export function DriversTable({
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.expirationDate ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.yearsExperience ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
+                <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-500)]">{d.mvr ? mvrSummary(d) : <span className="text-[var(--color-ink-400)]">Not on file</span>}</td>
                 <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                   {d.isManual ? (
                     <span className="inline-flex items-center gap-1"><User size={11} />Entered by broker</span>
@@ -174,6 +202,7 @@ export function DriversTable({
                 </td>
                 <td className="py-2.5">
                   <div className="flex items-center gap-1">
+                    <CopyButton iconOnly text={driverCopyText(d)} label="Copy driver" />
                     <button onClick={() => startEdit(d)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer disabled:opacity-40" aria-label="Edit driver"><Pencil size={13} /></button>
                     <button onClick={() => setDeleteTarget(d)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer disabled:opacity-40" aria-label="Delete driver"><Trash2 size={13} /></button>
                   </div>

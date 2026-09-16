@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { KeyRound } from 'lucide-react';
+import { CircleCheck, KeyRound } from 'lucide-react';
 import { Button } from '../components/ui';
 import { AuthShell, authInputClass as inputClass } from '../components/auth/AuthShell';
 import { signInBroker, requestBrokerPasswordReset, updateBrokerPassword } from '../services/supabase/brokerAuth';
@@ -124,10 +124,33 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // Captured once, synchronously, on first render — before Supabase's own hash-consuming session
+  // recovery can run and strip it — so a broker arriving here via the emailRedirectTo link after
+  // clicking "confirm" sees an explicit "you're verified" state instead of silently landing on the
+  // dashboard with no acknowledgement that anything just happened (see brokerAuth.ts signUpBroker).
+  const [justVerifiedEmail] = useState(() => /type=signup/.test(window.location.hash) || /type=email_change/.test(window.location.hash));
 
   useEffect(() => {
-    if (session.status === 'signed_in') navigate('/', { replace: true });
-  }, [session.status, navigate]);
+    if (session.status === 'signed_in') {
+      if (justVerifiedEmail) {
+        const t = setTimeout(() => navigate('/', { replace: true }), 1600);
+        return () => clearTimeout(t);
+      }
+      navigate('/', { replace: true });
+    }
+  }, [session.status, navigate, justVerifiedEmail]);
+
+  if (session.status === 'signed_in' && justVerifiedEmail) {
+    return (
+      <AuthShell>
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--color-success-100)] bg-[var(--color-success-50)] p-6 text-center">
+          <CircleCheck size={22} className="text-[var(--color-success-600)]" />
+          <p className="text-sm font-medium text-[var(--color-ink-800)]">Email verified — you're signed in.</p>
+          <p className="text-xs text-[var(--color-ink-500)]">Taking you to Renewal IQ…</p>
+        </div>
+      </AuthShell>
+    );
+  }
 
   async function handleSubmit() {
     if (!email.trim() || !password) return;

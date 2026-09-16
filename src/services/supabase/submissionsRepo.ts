@@ -1,5 +1,5 @@
 import { supabase } from './client';
-import type { Account, ActivityEvent, CoverageType, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import type { Account, ActivityEvent, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MvrRecord, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
@@ -153,7 +153,7 @@ export interface CloudSubmissionBundle {
 export async function fetchUserSubmissions(userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all([
+    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes, contactRes] = await Promise.all([
       supabase.from('submissions').select('*').eq('user_id', userId),
       supabase.from('field_values').select('*').eq('user_id', userId),
       supabase.from('field_alternates').select('*').eq('user_id', userId),
@@ -163,8 +163,9 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
       supabase.from('losses').select('*').eq('user_id', userId),
       supabase.from('documents').select('*').eq('user_id', userId),
       supabase.from('activity_events').select('*').eq('user_id', userId),
+      supabase.from('contacts').select('*').eq('user_id', userId),
     ]);
-    const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
+    const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes, contactRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
 
     const bundles: CloudSubmissionBundle[] = (subsRes.data ?? []).map((sub) => {
@@ -217,6 +218,9 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           year: v.year ?? undefined,
           value: v.value ?? undefined,
           bodyType: v.body_type ?? undefined,
+          plate: v.plate ?? undefined,
+          registeredOwner: v.registered_owner ?? undefined,
+          registrationAddress: v.registration_address ?? undefined,
           isManual: v.is_manual,
           lastUpdatedAt: v.last_updated_at ?? undefined,
           source: v.source_document_id ? { documentId: v.source_document_id, documentName: '', page: v.source_page ?? undefined, excerpt: v.source_excerpt ?? undefined } : undefined,
@@ -228,12 +232,37 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           id: d.id,
           name: d.name ?? undefined,
           dob: d.dob ?? undefined,
+          address: d.address ?? undefined,
+          phone: d.phone ?? undefined,
+          email: d.email ?? undefined,
           licenseState: d.license_state ?? undefined,
+          licenseNumber: d.license_number ?? undefined,
+          licenseClass: d.license_class ?? undefined,
+          isCDL: d.is_cdl ?? undefined,
+          issueDate: d.issue_date ?? undefined,
+          expirationDate: d.expiration_date ?? undefined,
+          restrictions: d.restrictions ?? undefined,
+          endorsements: d.endorsements ?? undefined,
           yearsExperience: d.years_experience ?? undefined,
           violations: d.violations ?? undefined,
+          mvr: (d.mvr as MvrRecord | null) ?? undefined,
+          identityReviewNote: d.identity_review_note ?? undefined,
           isManual: d.is_manual,
           lastUpdatedAt: d.last_updated_at ?? undefined,
           source: d.source_document_id ? { documentId: d.source_document_id, documentName: '', page: d.source_page ?? undefined, excerpt: d.source_excerpt ?? undefined } : undefined,
+        }));
+
+      const contacts: Contact[] = (contactRes.data ?? [])
+        .filter((c) => c.submission_id === sub.id)
+        .map((c) => ({
+          id: c.id,
+          name: c.name ?? undefined,
+          role: c.role ?? undefined,
+          phone: c.phone ?? undefined,
+          email: c.email ?? undefined,
+          isManual: c.is_manual,
+          lastUpdatedAt: c.last_updated_at ?? undefined,
+          source: c.source_document_id ? { documentId: c.source_document_id, documentName: '', page: c.source_page ?? undefined, excerpt: c.source_excerpt ?? undefined } : undefined,
         }));
 
       const lossHistory: LossEntry[] = (lossRes.data ?? [])
@@ -280,6 +309,7 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         coverage,
         vehicles,
         drivers,
+        contacts,
         lossHistory,
         updatedAt: sub.updated_at,
       };
@@ -331,6 +361,7 @@ export async function saveSubmissionSnapshot(
       supabase.from('vehicles').delete().eq('submission_id', account.id),
       supabase.from('drivers').delete().eq('submission_id', account.id),
       supabase.from('losses').delete().eq('submission_id', account.id),
+      supabase.from('contacts').delete().eq('submission_id', account.id),
     ]);
     const delErr = del.find((r) => r.error);
     if (delErr?.error) return fail(delErr.error.message);
@@ -355,6 +386,9 @@ export async function saveSubmissionSnapshot(
             year: v.year ?? null,
             value: v.value ?? null,
             body_type: v.bodyType ?? null,
+            plate: v.plate ?? null,
+            registered_owner: v.registeredOwner ?? null,
+            registration_address: v.registrationAddress ?? null,
             is_manual: !!v.isManual,
             source_document_id: v.source?.documentId ?? null,
             source_page: v.source?.page ?? null,
@@ -373,9 +407,21 @@ export async function saveSubmissionSnapshot(
             user_id: userId,
             name: d.name ?? null,
             dob: d.dob ?? null,
+            address: d.address ?? null,
+            phone: d.phone ?? null,
+            email: d.email ?? null,
             license_state: d.licenseState ?? null,
+            license_number: d.licenseNumber ?? null,
+            license_class: d.licenseClass ?? null,
+            is_cdl: d.isCDL ?? null,
+            issue_date: d.issueDate ?? null,
+            expiration_date: d.expirationDate ?? null,
+            restrictions: d.restrictions ?? null,
+            endorsements: d.endorsements ?? null,
             years_experience: d.yearsExperience ?? null,
             violations: d.violations ?? null,
+            mvr: d.mvr ?? null,
+            identity_review_note: d.identityReviewNote ?? null,
             is_manual: !!d.isManual,
             source_document_id: d.source?.documentId ?? null,
             source_page: d.source?.page ?? null,
@@ -403,6 +449,26 @@ export async function saveSubmissionSnapshot(
             source_page: l.source?.page ?? null,
             source_excerpt: l.source?.excerpt ?? null,
             last_updated_at: l.lastUpdatedAt ?? null,
+          }))
+        )
+      );
+    }
+    if (profile.contacts.length) {
+      inserts.push(
+        supabase.from('contacts').insert(
+          profile.contacts.map((c) => ({
+            id: c.id,
+            submission_id: account.id,
+            user_id: userId,
+            name: c.name ?? null,
+            role: c.role ?? null,
+            phone: c.phone ?? null,
+            email: c.email ?? null,
+            is_manual: !!c.isManual,
+            source_document_id: c.source?.documentId ?? null,
+            source_page: c.source?.page ?? null,
+            source_excerpt: c.source?.excerpt ?? null,
+            last_updated_at: c.lastUpdatedAt ?? null,
           }))
         )
       );

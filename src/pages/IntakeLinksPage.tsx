@@ -42,6 +42,9 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
+          <p className="truncate text-xs text-[var(--color-ink-400)]">
+            {link.brokerageName ? `Shown to applicant as: ${link.brokerageName}` : 'No brokerage name set — the form will show a generic "your insurance broker."'}
+          </p>
           <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -59,11 +62,22 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
   );
 }
 
+const BROKERAGE_NAME_STORAGE_KEY = 'renewaliq.brokerageName';
+
 function LinksSection({ userId }: { userId: string }) {
   const [links, setLinks] = useState<IntakeLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
+  // Remembered locally so a broker creating several links doesn't have to retype their own agency
+  // name every time — this is display text shown to applicants, never a security boundary.
+  const [brokerageName, setBrokerageName] = useState(() => {
+    try {
+      return localStorage.getItem(BROKERAGE_NAME_STORAGE_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -87,7 +101,13 @@ function LinksSection({ userId }: { userId: string }) {
     if (!label.trim()) return;
     setCreating(true);
     setCreateError(null);
-    const result = await createIntakeLink(userId, label.trim());
+    const trimmedBrokerage = brokerageName.trim();
+    try {
+      if (trimmedBrokerage) localStorage.setItem(BROKERAGE_NAME_STORAGE_KEY, trimmedBrokerage);
+    } catch {
+      // localStorage unavailable (private browsing, etc.) — not worth failing link creation over.
+    }
+    const result = await createIntakeLink(userId, label.trim(), trimmedBrokerage || null);
     setCreating(false);
     if (!result.ok) {
       // Never fail silently — a broker clicking "New Link" and seeing nothing happen (no new row,
@@ -104,14 +124,24 @@ function LinksSection({ userId }: { userId: string }) {
     <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">
       <div>
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
-        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login.</p>
+        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
+          Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login. The link has no fixed
+          recipient — whoever you send the URL to can open and complete it, and it comes back only to your own workspace here.
+        </p>
       </div>
-      <div className="flex gap-2">
-        <input className={inputClass} placeholder="Label, e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
-        <Button disabled={!label.trim() || creating} onClick={handleCreate}>
-          {creating ? 'Creating…' : 'New Link'}
-        </Button>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Who is this link for? <span className="text-[var(--color-ink-400)]">(your own reference)</span></label>
+          <input className={inputClass} placeholder="e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Your brokerage/agency name <span className="text-[var(--color-ink-400)]">(shown to whoever fills this out)</span></label>
+          <input className={inputClass} placeholder="e.g. Harbor Point Insurance" value={brokerageName} onChange={(e) => setBrokerageName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+        </div>
       </div>
+      <Button disabled={!label.trim() || creating} onClick={handleCreate} className="self-start">
+        {creating ? 'Creating…' : 'New Link'}
+      </Button>
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />

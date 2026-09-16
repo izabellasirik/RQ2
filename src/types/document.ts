@@ -8,6 +8,7 @@ export type DocumentCategory =
   | 'vehicle_registration'
   | 'insurance_id_card'
   | 'insurance_declarations'
+  | 'mvr'
   | 'other';
 
 export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
@@ -20,6 +21,7 @@ export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
   vehicle_registration: 'Vehicle Registration',
   insurance_id_card: 'Insurance ID Card',
   insurance_declarations: 'Insurance Declarations Page',
+  mvr: 'MVR / Driver History',
   other: 'Other',
 };
 
