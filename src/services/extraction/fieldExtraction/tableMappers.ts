@@ -1,0 +1,229 @@
+import type { CoverageType, DriverEntry, LossStatus, VehicleEntry } from '../../../types';
+import type { RawTable } from '../../ingestion';
+import { parseCount, parseMoney } from './money';
+import { COVERAGE_TYPE_ALIASES } from './coveragePatterns';
+import { normalizeVehicleBodyType } from './vehicleBodyType';
+
+function normalizeHeader(h: string): string {
+  return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** Standard US VIN format: 17 characters, alphanumeric excluding I/O/Q (never confused with 1/0). A VIN column value that doesn't match this is dropped rather than accepted as-is — never guessed or reformatted. */
+export function isValidVin(raw: string): boolean {
+  return /^[A-HJ-NPR-Z0-9]{17}$/i.test(raw.trim());
+}
+
+/**
+ * `exactOnly` synonyms are single common words ("driver", "type") that would false-positive if
+ * matched as a substring of an unrelated header ("Driver License Number" is not a name column) —
+ * they're only ever considered as a whole-header match, never via the partial/"includes" fallback.
+ */
+function findColumn(headers: string[], synonyms: string[], exactOnly: string[] = []): number {
+  const normalized = headers.map(normalizeHeader);
+  for (const syn of [...synonyms, ...exactOnly]) {
+    const exact = normalized.indexOf(syn);
+    if (exact !== -1) return exact;
+  }
+  for (const syn of synonyms) {
+    const partial = normalized.findIndex((h) => h.includes(syn));
+    if (partial !== -1) return partial;
+  }
+  return -1;
+}
+
+const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'fieldConfidence' | 'conflicts'>, string[]> = {
+  vin: ['vin', 'vehicle identification number'],
+  make: ['make'],
+  model: ['model'],
+  year: ['year', 'model year', 'vehicle year'],
+  value: ['value', 'vehicle value', 'stated value', 'acv', 'actual cash value'],
+  bodyType: ['vehicle type', 'body type', 'unit type'],
+  plate: ['plate', 'license plate', 'plate number', 'tag number'],
+};
+/** Bare single-word headers only safe as a whole-header match, never a substring. */
+const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
+
+const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence' | 'conflicts'>, string[]> = {
+  name: ['driver name', 'employee name', 'name'],
+  dob: ['dob', 'date of birth'],
+  address: ['address', 'driver address', 'home address'],
+  licenseState: ['license state', 'lic state', 'state license', 'licensing state'],
+  licenseNumber: ['license number', 'license no', 'dl number', 'lic number', 'lic #'],
+  licenseClass: ['license class', 'lic class', 'class'],
+  issueDate: ['issue date', 'date issued'],
+  expirationDate: ['expiration date', 'expiry date', 'exp date', 'license expiration'],
+  restrictions: ['restrictions', 'license restrictions'],
+  endorsements: ['endorsements', 'license endorsements'],
+  yearsExperience: ['years experience', 'years of experience', 'yrs experience', 'driving experience', 'experience'],
+  violations: ['violations', 'mvr violations', 'violation history'],
+};
+/** Bare single-word headers that are only safe to match as a whole header, never as a substring. */
+const DRIVER_NAME_EXACT_ONLY = ['driver'];
+
+const LOSS_SYNONYMS = {
+  lossDate: ['loss date', 'date of loss', 'date'],
+  claimType: ['claim type', 'type', 'cause', 'peril'],
+  paid: ['paid', 'paid amount', 'total paid'],
+  reserved: ['reserve', 'reserved', 'reserve amount'],
+  incurred: ['incurred', 'total incurred'],
+  status: ['status', 'claim status'],
+};
+
+const COVERAGE_SYNONYMS = {
+  coverageType: ['coverage', 'coverage type', 'line', 'line of business'],
+  requestedLimit: ['requested limit', 'limit requested', 'limit'],
+};
+
+export type TableKind = 'vehicles' | 'drivers' | 'losses' | 'coverage' | 'unrecognized';
+
+/** Classifies a table by its headers so we never guess a mapping for a shape we don't recognize. */
+export function classifyTable(headers: string[]): TableKind {
+  if (findColumn(headers, VEHICLE_SYNONYMS.vin) !== -1) return 'vehicles';
+  if (findColumn(headers, DRIVER_SYNONYMS.dob) !== -1 || findColumn(headers, DRIVER_SYNONYMS.licenseState) !== -1) return 'drivers';
+  if (findColumn(headers, LOSS_SYNONYMS.paid) !== -1 && findColumn(headers, LOSS_SYNONYMS.incurred) !== -1) return 'losses';
+  if (findColumn(headers, COVERAGE_SYNONYMS.coverageType) !== -1 && findColumn(headers, COVERAGE_SYNONYMS.requestedLimit) !== -1) return 'coverage';
+  return 'unrecognized';
+}
+
+export interface MappedVehicleRow {
+  row: number;
+  entry: Omit<VehicleEntry, 'id' | 'source'>;
+}
+
+export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
+  const col = {
+    vin: findColumn(table.headers, VEHICLE_SYNONYMS.vin),
+    make: findColumn(table.headers, VEHICLE_SYNONYMS.make),
+    model: findColumn(table.headers, VEHICLE_SYNONYMS.model),
+    year: findColumn(table.headers, VEHICLE_SYNONYMS.year),
+    value: findColumn(table.headers, VEHICLE_SYNONYMS.value),
+    bodyType: findColumn(table.headers, VEHICLE_SYNONYMS.bodyType, VEHICLE_BODY_TYPE_EXACT_ONLY),
+    plate: findColumn(table.headers, VEHICLE_SYNONYMS.plate),
+  };
+
+  const results: MappedVehicleRow[] = [];
+  table.rows.forEach((row, i) => {
+    const entry: Omit<VehicleEntry, 'id' | 'source'> = {};
+    if (col.vin !== -1 && row[col.vin] && isValidVin(row[col.vin])) entry.vin = row[col.vin].trim();
+    if (col.make !== -1 && row[col.make]) entry.make = row[col.make].trim();
+    if (col.model !== -1 && row[col.model]) entry.model = row[col.model].trim();
+    if (col.year !== -1 && row[col.year]) {
+      const year = parseCount(row[col.year]);
+      if (year !== null) entry.year = year;
+    }
+    if (col.value !== -1 && row[col.value]) {
+      const value = parseMoney(row[col.value]);
+      if (value !== null) entry.value = value;
+    }
+    if (col.bodyType !== -1 && row[col.bodyType]) {
+      // Only ever derived from an explicit type/body-type column — never guessed from make/model.
+      const bodyType = normalizeVehicleBodyType(row[col.bodyType]);
+      if (bodyType !== null) entry.bodyType = bodyType;
+    }
+    if (col.plate !== -1 && row[col.plate]) entry.plate = row[col.plate].trim().toUpperCase();
+    if (Object.keys(entry).length > 0) results.push({ row: i, entry });
+  });
+  return results;
+}
+
+export interface MappedDriverRow {
+  row: number;
+  entry: Omit<DriverEntry, 'id' | 'source'>;
+}
+
+export function mapDriverTable(table: RawTable): MappedDriverRow[] {
+  const col = {
+    name: findColumn(table.headers, DRIVER_SYNONYMS.name, DRIVER_NAME_EXACT_ONLY),
+    dob: findColumn(table.headers, DRIVER_SYNONYMS.dob),
+    address: findColumn(table.headers, DRIVER_SYNONYMS.address),
+    licenseState: findColumn(table.headers, DRIVER_SYNONYMS.licenseState),
+    licenseNumber: findColumn(table.headers, DRIVER_SYNONYMS.licenseNumber),
+    licenseClass: findColumn(table.headers, DRIVER_SYNONYMS.licenseClass),
+    issueDate: findColumn(table.headers, DRIVER_SYNONYMS.issueDate),
+    expirationDate: findColumn(table.headers, DRIVER_SYNONYMS.expirationDate),
+    restrictions: findColumn(table.headers, DRIVER_SYNONYMS.restrictions),
+    endorsements: findColumn(table.headers, DRIVER_SYNONYMS.endorsements),
+    yearsExperience: findColumn(table.headers, DRIVER_SYNONYMS.yearsExperience),
+    violations: findColumn(table.headers, DRIVER_SYNONYMS.violations),
+  };
+
+  const results: MappedDriverRow[] = [];
+  table.rows.forEach((row, i) => {
+    const entry: Omit<DriverEntry, 'id' | 'source'> = {};
+    if (col.name !== -1 && row[col.name]) entry.name = row[col.name].trim();
+    if (col.dob !== -1 && row[col.dob]) entry.dob = row[col.dob].trim();
+    if (col.address !== -1 && row[col.address]) entry.address = row[col.address].trim();
+    if (col.licenseState !== -1 && row[col.licenseState]) entry.licenseState = row[col.licenseState].trim().toUpperCase();
+    if (col.licenseNumber !== -1 && row[col.licenseNumber]) entry.licenseNumber = row[col.licenseNumber].trim().toUpperCase();
+    if (col.licenseClass !== -1 && row[col.licenseClass]) entry.licenseClass = row[col.licenseClass].trim().toUpperCase();
+    if (col.issueDate !== -1 && row[col.issueDate]) entry.issueDate = row[col.issueDate].trim();
+    if (col.expirationDate !== -1 && row[col.expirationDate]) entry.expirationDate = row[col.expirationDate].trim();
+    if (col.restrictions !== -1 && row[col.restrictions]) entry.restrictions = row[col.restrictions].trim();
+    if (col.endorsements !== -1 && row[col.endorsements]) entry.endorsements = row[col.endorsements].trim();
+    if (col.yearsExperience !== -1 && row[col.yearsExperience]) {
+      const years = parseCount(row[col.yearsExperience]);
+      if (years !== null) entry.yearsExperience = years;
+    }
+    if (col.violations !== -1 && row[col.violations]) entry.violations = row[col.violations].trim();
+    if (Object.keys(entry).length > 0) results.push({ row: i, entry });
+  });
+  return results;
+}
+
+export interface MappedLossRow {
+  row: number;
+  entry: { lossDate: string; claimType: string; paid: number; reserved: number; incurred: number; status: LossStatus };
+}
+
+export function mapLossTable(table: RawTable): MappedLossRow[] {
+  const col = {
+    lossDate: findColumn(table.headers, LOSS_SYNONYMS.lossDate),
+    claimType: findColumn(table.headers, LOSS_SYNONYMS.claimType),
+    paid: findColumn(table.headers, LOSS_SYNONYMS.paid),
+    reserved: findColumn(table.headers, LOSS_SYNONYMS.reserved),
+    incurred: findColumn(table.headers, LOSS_SYNONYMS.incurred),
+    status: findColumn(table.headers, LOSS_SYNONYMS.status),
+  };
+  if (col.lossDate === -1 || col.paid === -1 || col.incurred === -1) return [];
+
+  const results: MappedLossRow[] = [];
+  table.rows.forEach((row, i) => {
+    const lossDate = row[col.lossDate]?.trim();
+    const paid = col.paid !== -1 ? parseCount(row[col.paid]) : null;
+    const incurred = col.incurred !== -1 ? parseCount(row[col.incurred]) : null;
+    if (!lossDate || paid === null || incurred === null) return;
+    const reserved = col.reserved !== -1 ? (parseCount(row[col.reserved]) ?? 0) : 0;
+    const statusRaw = col.status !== -1 ? row[col.status]?.trim().toLowerCase() : '';
+    const status: LossStatus = statusRaw === 'open' ? 'open' : 'closed';
+    const claimType = col.claimType !== -1 ? row[col.claimType]?.trim() || 'Unspecified' : 'Unspecified';
+    results.push({ row: i, entry: { lossDate, claimType, paid, reserved, incurred, status } });
+  });
+  return results;
+}
+
+export interface MappedCoverageRow {
+  row: number;
+  coverageType: CoverageType;
+  requestedLimit: string;
+}
+
+export function mapCoverageTable(table: RawTable): MappedCoverageRow[] {
+  const col = {
+    coverageType: findColumn(table.headers, COVERAGE_SYNONYMS.coverageType),
+    requestedLimit: findColumn(table.headers, COVERAGE_SYNONYMS.requestedLimit),
+  };
+  if (col.coverageType === -1 || col.requestedLimit === -1) return [];
+
+  const results: MappedCoverageRow[] = [];
+  table.rows.forEach((row, i) => {
+    const label = row[col.coverageType]?.trim();
+    const limitRaw = row[col.requestedLimit]?.trim();
+    if (!label || !limitRaw) return;
+    const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
+    if (!alias) return;
+    const limitValue = parseMoney(limitRaw.replace(/[^\d.,km]/gi, ''));
+    const requestedLimit = limitValue !== null ? `$${limitValue.toLocaleString('en-US')}` : limitRaw;
+    results.push({ row: i, coverageType: alias.type, requestedLimit });
+  });
+  return results;
+}

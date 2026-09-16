@@ -1,0 +1,428 @@
+import { useEffect, useState } from 'react';
+import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, CircleCheck, PencilLine, Sparkles } from 'lucide-react';
+import type { ExtractionMethod, FieldValue } from '../../types';
+import type { FieldResolution } from '../../services/extraction';
+import { Badge, Skeleton } from '../ui';
+import { cn } from '../../utils/cn';
+import { relativeTime } from '../../utils/dates';
+import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
+import { formatCurrencyValue, parseCurrencyInput } from '../../utils/currency';
+
+/** 'currency' is for true numeric monetary fields (e.g. annualRevenue) — stores/parses a clean number, displays with $ and comma separators. A monetary field that's fundamentally free text (coverage limits, which can legitimately hold "$1M/$2M CSL") stays 'text' and is normalized at its own save call site instead — see utils/currency.ts's normalizeCurrencyText. */
+export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list';
+
+const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
+  ai_extraction: 'AI-extracted',
+  deterministic_import: 'Imported from API',
+  manual_entry: 'Entered by broker',
+  image_ocr: 'Read from a photo (OCR)',
+  vision_extraction: 'Read from a photo (AI vision)',
+  applicant_provided: 'Provided by applicant on intake form',
+};
+
+interface FieldRowProps<T> {
+  label: string;
+  field: FieldValue<T>;
+  valueType: FieldValueType;
+  onSave: (value: T) => void;
+  /** Enables the "choose which extracted value is correct" conflict resolver. Omit for fields that can't conflict (e.g. coverage lines today). */
+  onResolve?: (resolution: FieldResolution<T>) => void;
+  readOnly?: boolean;
+  /** Show a skeleton instead of "Not provided" — used while a document that might fill this field is still processing. */
+  pending?: boolean;
+  /** Auto-opens the source/conflict detail panel — used when another page deep-links straight to this field. */
+  autoExpand?: boolean;
+}
+
+export function displayReadValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number' && Math.abs(value) >= 1000) return value.toLocaleString('en-US');
+  return String(value);
+}
+
+export function parseDraft(valueType: FieldValueType, raw: string): unknown {
+  if (valueType === 'number') return raw.trim() === '' ? null : Number(raw.replace(/,/g, ''));
+  if (valueType === 'currency') return parseCurrencyInput(raw);
+  if (valueType === 'list') return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (valueType === 'boolean') return raw === 'Yes';
+  return raw;
+}
+
+/**
+ * True when a draft can actually be committed for this valueType — every inline-edit surface
+ * (FieldRow, the What's Missing panel, the Submission Assistant preview) calls this before saving
+ * on Enter or the Save button, so a broker's keystrokes are never silently discarded as a blank/null
+ * value. A currency/number field with non-empty text that doesn't parse to a real number (e.g.
+ * "abc") is invalid and blocks the save; an empty draft is always valid (an explicit clear).
+ */
+export function isValidDraft(valueType: FieldValueType, raw: string): boolean {
+  if ((valueType === 'currency' || valueType === 'number') && raw.trim() !== '') {
+    return parseDraft(valueType, raw) !== null;
+  }
+  return true;
+}
+
+/**
+ * Enter commits, Escape cancels — the one keyboard contract every single-line inline editor in the
+ * app shares (FieldRow, What's Missing, the Submission Assistant preview). Deliberately NOT used for
+ * a `<textarea>`, where Enter must stay a plain newline — see the dedicated multiline handler below.
+ * Plain functions, not hooks (no "use" prefix) — they hold no state of their own and just close over
+ * the caller's own commit/cancel, so they're fine to build fresh on every render.
+ */
+export function singleLineEditKeyDown(commit: () => void, cancel: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+}
+
+/** Cmd/Ctrl+Enter commits a multiline field; plain Enter stays a normal newline; Escape cancels. */
+export function multilineEditKeyDown(commit: () => void, cancel: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+}
+
+export function ValueInput({
+  valueType,
+  value,
+  onChange,
+  autoFocus,
+  onKeyDown,
+}: {
+  valueType: FieldValueType;
+  value: string;
+  onChange: (v: string) => void;
+  autoFocus?: boolean;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+}) {
+  if (valueType === 'boolean') {
+    return (
+      <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
+        <option value="Yes">Yes</option>
+        <option value="No">No</option>
+      </select>
+    );
+  }
+  return (
+    <input
+      autoFocus={autoFocus}
+      // 'currency' stays a plain text input (not type="number") specifically so a broker can freely
+      // backspace/retype while editing without the browser's number-input caret quirks — it still
+      // only expects plain digits, per parseCurrencyInput above; formatting only ever happens on
+      // display, never live while typing.
+      type={valueType === 'number' ? 'number' : 'text'}
+      inputMode={valueType === 'currency' ? 'decimal' : undefined}
+      placeholder={valueType === 'currency' ? 'e.g. 100000' : undefined}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+      className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+    />
+  );
+}
+
+function ConflictResolver<T>({
+  field,
+  valueType,
+  onResolve,
+  onDone,
+}: {
+  field: FieldValue<T>;
+  valueType: FieldValueType;
+  onResolve: (resolution: FieldResolution<T>) => void;
+  onDone: () => void;
+}) {
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualDraft, setManualDraft] = useState('');
+
+  const options: { display: string; source?: FieldValue<T>['source']; resolution: FieldResolution<T> }[] = [
+    { display: displayReadValue(field.value), source: field.source, resolution: { type: 'primary' } },
+    ...(field.alternateValues ?? []).map((alt, i) => ({
+      display: displayReadValue(alt.value),
+      source: alt.source,
+      resolution: { type: 'alternate' as const, index: i },
+    })),
+  ];
+
+  function choose(resolution: FieldResolution<T>) {
+    onResolve(resolution);
+    onDone();
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="font-medium text-[var(--color-ink-700)]">Documents disagree on this value — choose the correct one:</p>
+      {options.map((opt, i) => (
+        <div key={i} className="flex items-start justify-between gap-3 rounded-md bg-white px-2.5 py-2">
+          <div className="min-w-0">
+            <p className="font-semibold text-[var(--color-ink-900)]">{opt.display || '—'}</p>
+            {opt.source && (
+              <p className="mt-0.5 text-[var(--color-ink-500)]">
+                {opt.source.documentName}
+                {opt.source.page ? `, page ${opt.source.page}` : ''}
+                {opt.source.excerpt && <span className="italic"> — "{opt.source.excerpt}"</span>}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => choose(opt.resolution)}
+            className="shrink-0 cursor-pointer rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-brand-700)]"
+          >
+            Use this value
+          </button>
+        </div>
+      ))}
+
+      {!manualOpen ? (
+        <button
+          onClick={() => setManualOpen(true)}
+          className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-brand-700)] underline decoration-dotted underline-offset-2 cursor-pointer"
+        >
+          <PencilLine size={12} />
+          Enter a different value manually
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          <ValueInput
+            valueType={valueType}
+            value={manualDraft}
+            onChange={setManualDraft}
+            autoFocus
+            onKeyDown={singleLineEditKeyDown(
+              () => {
+                if (!isValidDraft(valueType, manualDraft)) return;
+                choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T });
+              },
+              () => setManualOpen(false)
+            )}
+          />
+          <button
+            onClick={() => {
+              if (!isValidDraft(valueType, manualDraft)) return;
+              choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T });
+            }}
+            className="shrink-0 cursor-pointer rounded-md bg-[var(--color-brand-800)] p-1.5 text-white"
+            aria-label="Save manual value"
+          >
+            <Check size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand }: FieldRowProps<T>) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(displayReadValue(field.value));
+  const [showDetail, setShowDetail] = useState(false);
+
+  useEffect(() => {
+    if (autoExpand) setShowDetail(true);
+  }, [autoExpand]);
+
+  function commit() {
+    if (!isValidDraft(valueType, draft)) return;
+    onSave(parseDraft(valueType, draft) as T);
+    setIsEditing(false);
+  }
+
+  function cancelEdit() {
+    setIsEditing(false);
+  }
+
+  const hasIssue = field.isMissing || field.isConflicting;
+  const status = fieldDataStatus(field);
+  const needsReview = status === 'needs_review';
+  const wasBrokerEdited = status === 'broker_edited';
+  const wasBrokerConfirmed = status === 'broker_confirmed';
+  const wasApplicantProvided = status === 'applicant_provided';
+  const wasAiExtracted = status === 'ai_extracted';
+
+  return (
+    <div className={cn('rounded-lg border px-4 py-3 transition-colors', hasIssue ? 'border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/30' : 'border-transparent hover:bg-[var(--color-ink-50)]')}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-[var(--color-ink-500)]">{label}</p>
+
+          {!isEditing ? (
+            <div className="mt-1 flex items-center gap-2">
+              {field.isMissing && pending ? (
+                <Skeleton width="60%" />
+              ) : field.isMissing ? (
+                <span className="text-sm italic text-[var(--color-ink-400)]">Not documented</span>
+              ) : valueType === 'boolean' ? (
+                <button
+                  onClick={() => setShowDetail((v) => !v)}
+                  className={cn(
+                    'inline-flex items-center rounded-md px-2 py-0.5 text-sm font-medium',
+                    field.value ? 'bg-[var(--color-success-100)] text-[var(--color-success-600)]' : 'bg-[var(--color-ink-100)] text-[var(--color-ink-600)]'
+                  )}
+                >
+                  {displayReadValue(field.value)}
+                </button>
+              ) : (
+                <p className="text-sm text-[var(--color-ink-900)]">{valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)}</p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-1.5 flex items-center gap-2">
+              {valueType === 'textarea' ? (
+                <textarea
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={multilineEditKeyDown(commit, cancelEdit)}
+                  rows={3}
+                  className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+                />
+              ) : (
+                <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
+              )}
+              <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
+                <Check size={14} />
+              </button>
+              <button onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+                <X size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!isEditing && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {needsReview && (
+              <Badge tone="warning">
+                <CircleAlert size={12} />
+                Needs Review
+              </Badge>
+            )}
+            {wasBrokerEdited && (
+              <Badge tone="brand">
+                <Pencil size={11} />
+                {DATA_STATUS_LABELS.broker_edited}
+              </Badge>
+            )}
+            {wasBrokerConfirmed && (
+              <Badge tone="success">
+                <CircleCheck size={11} />
+                {DATA_STATUS_LABELS.broker_confirmed}
+              </Badge>
+            )}
+            {wasApplicantProvided && (
+              <Badge tone="neutral">
+                <PencilLine size={11} />
+                {DATA_STATUS_LABELS.applicant_provided}
+              </Badge>
+            )}
+            {wasAiExtracted && (
+              <Badge tone="info">
+                <Sparkles size={11} />
+                {DATA_STATUS_LABELS.ai_extracted}
+              </Badge>
+            )}
+            {field.isConflicting && (
+              <button
+                onClick={() => setShowDetail((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-full bg-[var(--color-warning-100)] px-2 py-1 text-xs font-medium text-[var(--color-warning-600)] cursor-pointer"
+              >
+                <TriangleAlert size={12} />
+                Conflict
+              </button>
+            )}
+            {field.source && (
+              <button onClick={() => setShowDetail((v) => !v)} className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label="Show source">
+                <FileText size={14} />
+              </button>
+            )}
+            {!readOnly && field.isMissing && (
+              <button
+                onClick={() => {
+                  setDraft('');
+                  setIsEditing(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-brand-700)] cursor-pointer"
+              >
+                + Add
+              </button>
+            )}
+            {!readOnly && !field.isMissing && (
+              <button
+                onClick={() => {
+                  // Currency fields re-enter edit mode showing the plain number (no $, no commas) —
+                  // easy to backspace/retype, exactly like typing it in fresh. Formatting only ever
+                  // happens for display, never inside the editable input.
+                  setDraft(valueType === 'currency' ? String(field.value ?? '') : displayReadValue(field.value));
+                  setIsEditing(true);
+                }}
+                className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer"
+                aria-label="Edit"
+              >
+                <Pencil size={14} />
+              </button>
+            )}
+            {(field.source || field.alternateValues?.length) && (
+              <button onClick={() => setShowDetail((v) => !v)} className="rounded-md p-1 text-[var(--color-ink-300)] cursor-pointer">
+                {showDetail ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {showDetail && (
+        <div className="mt-3 space-y-2 border-t border-[var(--color-ink-100)] pt-3 text-xs">
+          {field.isConflicting && onResolve ? (
+            <ConflictResolver field={field} valueType={valueType} onResolve={onResolve} onDone={() => setShowDetail(false)} />
+          ) : (
+            <>
+              {field.source && (
+                <div className="flex items-start gap-2 text-[var(--color-ink-500)]">
+                  <FileText size={13} className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-[var(--color-ink-700)]">{field.source.documentName}{field.source.page ? `, page ${field.source.page}` : ''}</p>
+                    {field.source.excerpt && <p className="mt-0.5 italic text-[var(--color-ink-500)]">"{field.source.excerpt}"</p>}
+                  </div>
+                </div>
+              )}
+              {(field.extractionMethod || field.lastUpdatedAt) && (
+                <p className="text-[var(--color-ink-400)]">
+                  {field.extractionMethod && EXTRACTION_METHOD_LABELS[field.extractionMethod]}
+                  {field.extractionMethod && field.lastUpdatedAt && ' · '}
+                  {field.lastUpdatedAt && `updated ${relativeTime(field.lastUpdatedAt)}`}
+                </p>
+              )}
+              {field.isConflicting &&
+                field.alternateValues?.map((alt, i) => (
+                  <div key={i} className="flex items-start gap-2 rounded-md bg-white px-2 py-1.5 text-[var(--color-ink-500)]">
+                    <TriangleAlert size={13} className="mt-0.5 shrink-0 text-[var(--color-warning-500)]" />
+                    <div>
+                      <p>
+                        Conflicting value <span className="font-semibold text-[var(--color-ink-800)]">{displayReadValue(alt.value)}</span> from{' '}
+                        <span className="font-medium text-[var(--color-ink-700)]">{alt.source.documentName}</span>
+                      </p>
+                      {alt.source.excerpt && <p className="mt-0.5 italic">"{alt.source.excerpt}"</p>}
+                    </div>
+                  </div>
+                ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
